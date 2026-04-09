@@ -1,26 +1,164 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  /* Muji — Sumi ink, breathable space, quiet beauty */
+  --color-void: #13120f;
+  --color-deep: #17160f;
+  --color-surface: #1e1c17;
+  --color-surface-2: #24221b;
+  --color-surface-3: #2a2720;
+  --color-border: rgba(200, 189, 160, 0.06);
+  --color-border-2: rgba(200, 189, 160, 0.09);
+  --color-border-3: rgba(200, 189, 160, 0.14);
+  --color-text: #c8bda0;
+  --color-text-2: #7a7060;
+  --color-text-3: #4a4535;
+  --color-text-4: #2e2b24;
+  --color-accent: #c45c4a;
+  --color-accent-glow: rgba(196, 92, 74, 0.12);
+  --color-gold: #c45c4a;
+  --color-gold-glow: rgba(196, 92, 74, 0.1);
+  --color-green: #7a9a6a;
+  --color-green-glow: rgba(122, 154, 106, 0.1);
+  --color-red: #c45c4a;
+  --color-red-glow: rgba(196, 92, 74, 0.12);
+  --color-purple: #8a7a9a;
+  --color-purple-glow: rgba(138, 122, 154, 0.1);
+  --color-telugu: #7a9a6a;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-serif: var(--font-crimson);
+  --font-screenplay: var(--font-courier);
+  --color-parchment: #17160f;
+  --color-parchment-border: rgba(196, 92, 74, 0.12);
+  --color-parchment-border-focus: rgba(196, 92, 74, 0.25);
+  --color-ink: #c8bda0;
+  --color-ink-faint: #7a7060;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-void);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
+
+::selection {
+  background: var(--color-accent-glow);
+  color: var(--color-text);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border-2); border-radius: 2px; }
+
+/* Vintage editor — the writer's desk */
+.vintage-editor {
+  font-family: var(--font-serif), Georgia, 'Times New Roman', serif;
+  background: var(--color-parchment);
+  border-color: var(--color-parchment-border);
+  color: var(--color-ink);
+  letter-spacing: 0.01em;
+  line-height: 1.85;
+}
+.vintage-editor::placeholder {
+  color: var(--color-ink-faint);
+  font-style: italic;
+}
+.vintage-editor:focus {
+  border-color: var(--color-parchment-border-focus);
+  box-shadow: 0 0 30px rgba(196, 92, 74, 0.04), inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.vintage-editor-wrap {
+  background: var(--color-parchment);
+  border-color: var(--color-parchment-border);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.15);
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.vintage-editor-wrap:focus-within {
+  border-color: var(--color-parchment-border-focus);
+  box-shadow: 0 0 30px rgba(196, 92, 74, 0.04), inset 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+/* Screenplay element formatting — industry standard (Courier 12pt layout)
+   US Letter: 1.5" left, 1.0" right → 6.0" printable width.
+   All indents/widths as % of 6" printable area:
+     Character:      2.2"/6" = 36.7%  width 3.7"/6" = 61.7%
+     Parenthetical:  1.6"/6" = 26.7%  width 2.5"/6" = 41.7%
+     Dialogue:       1.0"/6" = 16.7%  width 3.5"/6" = 58.3%
+     Transition:     right-aligned */
+.sp-scene-heading {
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-top: 2em;
+  margin-bottom: 1em;
+}
+.sp-scene-heading:first-child {
+  margin-top: 0;
+}
+.sp-action {
+  margin-top: 1em;
+}
+.sp-character {
+  text-transform: uppercase;
+  text-align: left;
+  margin-top: 1em;
+  margin-left: 36.7%;
+  max-width: 61.7%;
+}
+.sp-dialogue {
+  margin-left: 16.7%;
+  max-width: 58.3%;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.sp-parenthetical {
+  margin-left: 26.7%;
+  max-width: 41.7%;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.sp-parenthetical::before {
+  content: '(';
+}
+.sp-parenthetical::after {
+  content: ')';
+}
+.sp-transition {
+  text-transform: uppercase;
+  text-align: right;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+/* Gold selection color for screenplay editor */
+.sp-scene-heading::selection, .sp-action::selection, .sp-character::selection,
+.sp-dialogue::selection, .sp-parenthetical::selection, .sp-transition::selection,
+.sp-scene-heading *::selection, .sp-action *::selection, .sp-character *::selection,
+.sp-dialogue *::selection, .sp-parenthetical *::selection, .sp-transition *::selection {
+  background: rgba(232, 197, 71, 0.15);
+}
+
+[contenteditable]:focus {
+  outline: none;
+}
+
+/* Find highlight (CSS Highlight API) — postcss-ignore needed for Turbopack */
+/* stylelint-disable-next-line selector-pseudo-element-no-unknown */
+@supports (::highlight(x)) {
+  ::highlight(search-highlight) {
+    background-color: rgba(196, 92, 74, 0.35);
+    color: inherit;
+  }
+}
+
+/* Phase transition animation */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out forwards;
+}
+
