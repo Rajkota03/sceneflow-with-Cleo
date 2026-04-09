@@ -1,0 +1,28 @@
+{
+  "name": "SceneFlow",
+  "short_name": "SceneFlow",
+  "description": "Screenplay editor with Kleo AI co-writer",
+  "start_url": "/editor",
+  "display": "standalone",
+  "background_color": "#13120f",
+  "theme_color": "#c45c4a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

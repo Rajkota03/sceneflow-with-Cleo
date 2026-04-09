@@ -28,6 +28,13 @@ const courierPrime = Courier_Prime({
 export const metadata: Metadata = {
   title: "SceneFlow — Story Intelligence System",
   description: "From idea to screenplay. Character discovery powered by AI.",
+  manifest: "/manifest.json",
+  themeColor: "#c45c4a",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "SceneFlow",
+  },
 };
 
 export default function RootLayout({
@@ -37,11 +44,19 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${crimsonPro.variable} ${courierPrime.variable}`}>
+      <head>
+        <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+      </head>
       <body
         className="min-h-screen antialiased"
         style={{ background: '#13120f', color: '#c8bda0' }}
       >
         {children}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}`,
+          }}
+        />
       </body>
     </html>
   );
