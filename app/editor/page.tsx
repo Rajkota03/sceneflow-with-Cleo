@@ -703,7 +703,7 @@ function EditorInner() {
           {/* ── Left: brand + file menu ── */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.18em', color: palette?.cursor ?? '#c45c4a', textTransform: 'uppercase' }}>SceneFlow</span>
-            <FileMenu currentTitle={screenplay?.title ?? ''} palette={palette} onLoadScreenplay={handleLoadScreenplay} onExport={handleExport} onRename={handleRename} onDuplicate={handleDuplicate} />
+            <FileMenu currentTitle={screenplay?.title ?? ''} palette={palette} onLoadScreenplay={handleLoadScreenplay} onExport={handleExport} onRename={handleRename} onDuplicate={handleDuplicate} getCurrentScreenplay={() => screenplay} />
           </div>
 
           {/* ── Center: view mode + panels ── */}

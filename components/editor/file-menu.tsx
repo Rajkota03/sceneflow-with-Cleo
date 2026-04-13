@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Screenplay } from '@/lib/types';
 import { getScreenplay, saveScreenplay, createEmptyScreenplay, uid } from '@/lib/screenplay-store';
+import { saveSfx, saveAsSfx, openSfx, hasFileHandle, clearFileHandle } from '@/lib/sfx';
 
 const KLEO_COLOR = '#c45c4a';
 const KLEO_HOVER = 'rgba(196, 92, 74, 0.08)';
@@ -13,9 +14,10 @@ interface FileMenuProps {
   onExport: () => void;
   onRename?: (title: string) => void;
   onDuplicate?: () => void;
+  getCurrentScreenplay?: () => Screenplay | null;
 }
 
-export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, onRename, onDuplicate }: FileMenuProps) {
+export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, onRename, onDuplicate, getCurrentScreenplay }: FileMenuProps) {
   const [open, setOpen] = useState(false);
   const [browseOpen, setBrowseOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -83,12 +85,21 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
     const file = e.target.files?.[0];
     if (!file) return;
     const text = await file.text();
-    console.log('[FDX Import] file:', file.name, 'size:', text.length, 'chars');
-    if (file.name.endsWith('.fdx')) {
+    console.log('[Import] file:', file.name, 'size:', text.length, 'chars');
+    if (file.name.endsWith('.sfx')) {
+      const { unpackSfx } = await import('@/lib/sfx');
+      try {
+        const sfx = unpackSfx(text);
+        saveScreenplay(sfx.screenplay);
+        onLoadScreenplay(sfx.screenplay);
+        setOpen(false);
+      } catch (err) {
+        console.error('[SFX Import] invalid file:', err);
+      }
+    } else if (file.name.endsWith('.fdx')) {
       const { parseFdx } = await import('@/lib/fdx-import');
       const id = `sf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const sp = parseFdx(text, id);
-      console.log('[FDX Import] parsed:', sp.title, sp.scenes.length, 'scenes, first heading:', sp.scenes[0]?.heading);
       saveScreenplay(sp);
       onLoadScreenplay(sp);
       setOpen(false);
@@ -103,6 +114,40 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
       setOpen(false);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    const sp = getCurrentScreenplay?.();
+    if (!sp) return;
+    const name = await saveSfx(sp);
+    if (name) {
+      setSaveStatus(`Saved ${name}`);
+      setTimeout(() => setSaveStatus(null), 2000);
+    }
+    setOpen(false);
+  };
+
+  const handleSaveAs = async () => {
+    const sp = getCurrentScreenplay?.();
+    if (!sp) return;
+    clearFileHandle();
+    const name = await saveAsSfx(sp);
+    if (name) {
+      setSaveStatus(`Saved ${name}`);
+      setTimeout(() => setSaveStatus(null), 2000);
+    }
+    setOpen(false);
+  };
+
+  const handleOpenSfx = async () => {
+    const sfx = await openSfx();
+    if (sfx) {
+      saveScreenplay(sfx.screenplay);
+      onLoadScreenplay(sfx.screenplay);
+    }
+    setOpen(false);
   };
 
   const handleRenameSubmit = () => {
@@ -121,10 +166,13 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
     const handler = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key === 'n' && !e.shiftKey) { e.preventDefault(); handleNew(); }
+      if (mod && e.key === 's' && !e.shiftKey) { e.preventDefault(); handleSave(); }
+      if (mod && e.shiftKey && e.key === 's') { e.preventDefault(); handleSaveAs(); }
+      if (mod && e.key === 'o' && !e.shiftKey) { e.preventDefault(); handleOpenSfx(); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [handleSave, handleSaveAs, handleOpenSfx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isMac = typeof navigator !== 'undefined' && navigator.platform?.includes('Mac');
   const mod = isMac ? '\u2318' : 'Ctrl+';
@@ -174,7 +222,7 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
         <span style={{ fontWeight: 500, letterSpacing: '0.03em' }}>File</span>
       </button>
 
-      <input ref={fileInputRef} type="file" accept=".fdx,.fountain" onChange={handleImport} style={{ display: 'none' }} />
+      <input ref={fileInputRef} type="file" accept=".sfx,.fdx,.fountain" onChange={handleImport} style={{ display: 'none' }} />
 
       {open && (
         <div style={{
@@ -252,7 +300,12 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
                 File
               </div>
               <Item onClick={handleNew} icon="+" label="New Screenplay" kbd={`${mod}N`} />
-              <Item onClick={() => { setBrowseOpen(true); loadProjects(); }} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 2h4l1.5 1.5H11v7H1V2z"/></svg>} label="Open..." />
+              <Item onClick={handleOpenSfx} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 2h4l1.5 1.5H11v7H1V2z"/></svg>} label="Open .sfx..." kbd={`${mod}O`} />
+              <Item onClick={() => { setBrowseOpen(true); loadProjects(); }} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" opacity="0.6"><path d="M2 3h3l1 1h4v5H2V3z"/></svg>} label="Browse Recent..." />
+              <Divider />
+              <Item onClick={handleSave} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2 1h6.5L11 3.5V10a1 1 0 01-1 1H2a1 1 0 01-1-1V2a1 1 0 011-1zm1 0v3h5V1H3zm1 6h4v4H4V7z"/></svg>} label={hasFileHandle() ? 'Save' : 'Save .sfx'} kbd={`${mod}S`} disabled={!getCurrentScreenplay} />
+              <Item onClick={handleSaveAs} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2 1h6.5L11 3.5V10a1 1 0 01-1 1H2a1 1 0 01-1-1V2a1 1 0 011-1zm1 0v3h5V1H3zm1 6h4v4H4V7z" opacity="0.6"/><path d="M8 8l2.5 2.5M10.5 8L8 10.5" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>} label="Save As..." kbd={`${mod}⇧S`} disabled={!getCurrentScreenplay} />
+              <Divider />
               <Item onClick={() => { setRenaming(true); setRenameValue(currentTitle); }} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z"/></svg>} label="Rename..." />
               <Item onClick={handleDuplicate} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="2" width="8" height="8" rx="1" opacity="0.4"/><rect x="2" y="0" width="8" height="8" rx="1"/></svg>} label="Duplicate" disabled={!onDuplicate} />
               <Divider />
@@ -264,6 +317,18 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
         </div>
       )}
 
+      {/* Save status toast */}
+      {saveStatus && (
+        <div style={{
+          position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+          background: '#1a1914', border: `1px solid rgba(196,92,74,0.2)`,
+          borderRadius: 8, padding: '8px 16px', fontSize: 11, color: KLEO_COLOR,
+          fontWeight: 500, zIndex: 100, boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+          animation: 'fadeIn 0.2s ease-out',
+        }}>
+          {saveStatus}
+        </div>
+      )}
     </div>
   );
 }
