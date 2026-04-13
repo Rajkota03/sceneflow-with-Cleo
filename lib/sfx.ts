@@ -1,4 +1,4 @@
-// .sfx — SceneFlow project file format
+// .sfw — SceneFlow project file format
 // JSON-based, stores screenplay + metadata + Kleo conversations
 
 import type { Screenplay } from './types';
@@ -33,7 +33,7 @@ export function packSfx(
 export function unpackSfx(raw: string): SfxFile {
   const data = JSON.parse(raw);
   if (data.format !== 'sceneflow' || !data.screenplay) {
-    throw new Error('Not a valid .sfx file');
+    throw new Error('Not a valid .sfw file');
   }
   return data as SfxFile;
 }
@@ -43,7 +43,7 @@ export function unpackSfx(raw: string): SfxFile {
 
 const SFX_TYPE = {
   description: 'SceneFlow Project',
-  accept: { 'application/json': ['.sfx'] },
+  accept: { 'application/json': ['.sfw'] },
 };
 
 let fileHandle: FileSystemFileHandle | null = null;
@@ -82,7 +82,7 @@ export async function saveAsSfx(
   kleo?: SfxFile['kleo'],
 ): Promise<string | null> {
   const json = packSfx(screenplay, kleo);
-  const filename = `${screenplay.title || 'Untitled'}.sfx`;
+  const filename = `${screenplay.title || 'Untitled'}.sfw`;
 
   if ('showSaveFilePicker' in window) {
     try {
@@ -132,7 +132,7 @@ export async function openSfx(): Promise<SfxFile | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.sfx';
+    input.accept = '.sfw';
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) { resolve(null); return; }

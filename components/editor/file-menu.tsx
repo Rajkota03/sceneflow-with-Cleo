@@ -86,7 +86,7 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
     if (!file) return;
     const text = await file.text();
     console.log('[Import] file:', file.name, 'size:', text.length, 'chars');
-    if (file.name.endsWith('.sfx')) {
+    if (file.name.endsWith('.sfw')) {
       const { unpackSfx } = await import('@/lib/sfx');
       try {
         const sfx = unpackSfx(text);
@@ -222,7 +222,7 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
         <span style={{ fontWeight: 500, letterSpacing: '0.03em' }}>File</span>
       </button>
 
-      <input ref={fileInputRef} type="file" accept=".sfx,.fdx,.fountain" onChange={handleImport} style={{ display: 'none' }} />
+      <input ref={fileInputRef} type="file" accept=".sfw,.fdx,.fountain" onChange={handleImport} style={{ display: 'none' }} />
 
       {open && (
         <div style={{
@@ -300,10 +300,10 @@ export function FileMenu({ currentTitle, palette, onLoadScreenplay, onExport, on
                 File
               </div>
               <Item onClick={handleNew} icon="+" label="New Screenplay" kbd={`${mod}N`} />
-              <Item onClick={handleOpenSfx} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 2h4l1.5 1.5H11v7H1V2z"/></svg>} label="Open .sfx..." kbd={`${mod}O`} />
+              <Item onClick={handleOpenSfx} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 2h4l1.5 1.5H11v7H1V2z"/></svg>} label="Open .sfw..." kbd={`${mod}O`} />
               <Item onClick={() => { setBrowseOpen(true); loadProjects(); }} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" opacity="0.6"><path d="M2 3h3l1 1h4v5H2V3z"/></svg>} label="Browse Recent..." />
               <Divider />
-              <Item onClick={handleSave} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2 1h6.5L11 3.5V10a1 1 0 01-1 1H2a1 1 0 01-1-1V2a1 1 0 011-1zm1 0v3h5V1H3zm1 6h4v4H4V7z"/></svg>} label={hasFileHandle() ? 'Save' : 'Save .sfx'} kbd={`${mod}S`} disabled={!getCurrentScreenplay} />
+              <Item onClick={handleSave} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2 1h6.5L11 3.5V10a1 1 0 01-1 1H2a1 1 0 01-1-1V2a1 1 0 011-1zm1 0v3h5V1H3zm1 6h4v4H4V7z"/></svg>} label={hasFileHandle() ? 'Save' : 'Save .sfw'} kbd={`${mod}S`} disabled={!getCurrentScreenplay} />
               <Item onClick={handleSaveAs} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2 1h6.5L11 3.5V10a1 1 0 01-1 1H2a1 1 0 01-1-1V2a1 1 0 011-1zm1 0v3h5V1H3zm1 6h4v4H4V7z" opacity="0.6"/><path d="M8 8l2.5 2.5M10.5 8L8 10.5" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>} label="Save As..." kbd={`${mod}⇧S`} disabled={!getCurrentScreenplay} />
               <Divider />
               <Item onClick={() => { setRenaming(true); setRenameValue(currentTitle); }} icon={<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z"/></svg>} label="Rename..." />
