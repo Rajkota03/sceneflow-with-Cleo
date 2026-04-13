@@ -1,5 +1,6 @@
-// SceneFlow Service Worker — lightweight offline shell cache
-const CACHE_NAME = 'sceneflow-v1';
+// SceneFlow Service Worker — network-first with cache fallback
+// Bump version to bust old caches on deploy
+const CACHE_NAME = 'sceneflow-v2';
 const SHELL_URLS = ['/', '/editor', '/character-builder'];
 
 self.addEventListener('install', (event) => {
@@ -16,6 +17,10 @@ self.addEventListener('activate', (event) => {
     )
   );
   self.clients.claim();
+  // Notify all open tabs to reload with new version
+  self.clients.matchAll({ type: 'window' }).then((clients) => {
+    clients.forEach((client) => client.postMessage({ type: 'SW_UPDATED' }));
+  });
 });
 
 self.addEventListener('fetch', (event) => {
@@ -24,10 +29,10 @@ self.addEventListener('fetch', (event) => {
   // Skip API calls and non-GET requests — always go to network
   if (request.method !== 'GET' || request.url.includes('/api/')) return;
 
+  // Network first, fall back to cache
   event.respondWith(
     fetch(request)
       .then((response) => {
-        // Cache successful page/asset responses
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));

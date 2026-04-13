@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Crimson_Pro, Courier_Prime } from "next/font/google";
 import "./globals.css";
 
@@ -25,11 +25,14 @@ const courierPrime = Courier_Prime({
   style: ["normal", "italic"],
 });
 
+export const viewport: Viewport = {
+  themeColor: "#c45c4a",
+};
+
 export const metadata: Metadata = {
   title: "SceneFlow — Story Intelligence System",
   description: "From idea to screenplay. Character discovery powered by AI.",
   manifest: "/manifest.json",
-  themeColor: "#c45c4a",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -54,7 +57,7 @@ export default function RootLayout({
         {children}
         <script
           dangerouslySetInnerHTML={{
-            __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}`,
+            __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');navigator.serviceWorker.addEventListener('message',function(e){if(e.data&&e.data.type==='SW_UPDATED')window.location.reload()})}`,
           }}
         />
       </body>
