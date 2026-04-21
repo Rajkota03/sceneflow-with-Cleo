@@ -1940,15 +1940,31 @@ export function WritingAreaTiptap({
 
   // Both Normal and Page view show a page-like wrapper (white page on dark desk).
   // Page view additionally shows page break decorations, MORE/CONT'D markers.
+  // Layered, organic shadow — close (physical proximity) + mid (lift) + far (depth).
+  // Makes the page feel like it's resting on a desk, not sitting in a browser.
   const pageStyle: React.CSSProperties = {
     maxWidth: PAGE_WIDTH_PX,
-    margin: '2rem auto 4rem',
+    margin: '2.25rem auto 4.5rem',
     backgroundColor: t.paper,
-    boxShadow: `0 2px 8px rgba(0,0,0,0.2), 0 8px 32px ${t.pageShadow}`,
+    boxShadow: [
+      '0 1px 2px rgba(0,0,0,0.18)',          // crisp edge
+      '0 4px 10px rgba(0,0,0,0.14)',         // close lift
+      `0 18px 40px ${t.pageShadow}`,         // mid shadow (themed)
+      '0 40px 80px rgba(0,0,0,0.22)',        // far depth
+    ].join(', '),
     padding: `${PAGE_PADDING_TOP}px ${PAGE_PADDING_RIGHT}px ${PAGE_PADDING_BOTTOM}px ${PAGE_PADDING_LEFT}px`,
     minHeight: '1056px',
     position: 'relative',
-    borderRadius: '2px',
+    borderRadius: '3px',
+    // Subtle paper grain — CSS radial gradient, no images, no bundle cost.
+    // The grain is almost imperceptible but stops the page from looking like a flat rectangle.
+    backgroundImage: `
+      radial-gradient(circle at 20% 30%, ${t.paper} 0%, ${t.paper} 100%),
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.006) 1px, transparent 1px),
+      radial-gradient(circle at 2px 2px, rgba(0,0,0,0.012) 1px, transparent 1px)
+    `,
+    backgroundSize: '100% 100%, 3px 3px, 5px 5px',
+    backgroundBlendMode: 'normal',
   }
 
   // ─── Render ───
