@@ -12,6 +12,7 @@ import type { Doc, BlockType } from '@/lib/doc';
 import { screenplayToDoc, docToScreenplay, createBlock, createDoc, docToPdf, deriveScenes, computeStats } from '@/lib/doc';
 import { autoSave as autoSaveDoc } from '@/lib/doc';
 import { getSession, getSessions } from '@/lib/session-store';
+import { StorySpine } from '@/components/editor/story-spine';
 import { BeatSheet } from '@/components/editor/beat-sheet';
 import { ScriptStats } from '@/components/editor/script-stats';
 import { CharacterReport } from '@/components/editor/character-report';
@@ -700,7 +701,7 @@ function EditorInner() {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col ${isFullscreen ? 'bg-void' : ''}`} style={{ background: palette?.desk ?? '#13120f' }}>
+    <div className={`h-screen flex flex-col overflow-hidden ${isFullscreen ? 'bg-void' : ''}`} style={{ background: palette?.desk ?? '#13120f' }}>
       {/* ── Zen mode: floating exit button + Escape key ── */}
       {isFullscreen && (
         <button
@@ -960,7 +961,15 @@ function EditorInner() {
         )}
       </div>
 
-      {/* StatusBar hidden — Muji: let the page breathe */}
+      {/* Story Spine — the shape of the script, at a glance */}
+      {!isFullscreen && doc && (
+        <StorySpine
+          doc={doc}
+          activeSceneId={activeSceneId}
+          onSelectScene={handleSelectScene}
+          palette={palette}
+        />
+      )}
 
       <BeatSheet
         scenes={screenplay.scenes}
