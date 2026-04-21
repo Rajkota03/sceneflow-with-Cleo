@@ -13,6 +13,8 @@ import { screenplayToDoc, docToScreenplay, createBlock, createDoc, docToPdf, der
 import { autoSave as autoSaveDoc } from '@/lib/doc';
 import { getSession, getSessions } from '@/lib/session-store';
 import { StorySpine } from '@/components/editor/story-spine';
+import { KleoMargin } from '@/components/editor/kleo-margin';
+import type { Signal } from '@/lib/kleo-signals';
 import { BeatSheet } from '@/components/editor/beat-sheet';
 import { ScriptStats } from '@/components/editor/script-stats';
 import { CharacterReport } from '@/components/editor/character-report';
@@ -49,6 +51,17 @@ function useIsMobile(breakpoint = 768) {
   return isMobile;
 }
 
+function useIsWideViewport(breakpoint = 1400) {
+  const [isWide, setIsWide] = useState(false);
+  useEffect(() => {
+    const check = () => setIsWide(window.innerWidth >= breakpoint);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, [breakpoint]);
+  return isWide;
+}
+
 export default function EditorPage() {
   return (
     <Suspense fallback={
@@ -68,6 +81,7 @@ function EditorInner() {
   const searchParams = useSearchParams();
   const projectId = searchParams.get('project');
   const isMobile = useIsMobile();
+  const isWideViewport = useIsWideViewport(1400);
 
   const [screenplay, setScreenplay] = useState<Screenplay | null>(null);
   const [doc, setDoc] = useState<Doc | null>(null);
@@ -121,6 +135,7 @@ function EditorInner() {
   const [kleoConversations, setKleoConversations] = useState<KleoMessage[]>([]);
   const [kleoSelectedText, setKleoSelectedText] = useState('');
   const [kleoIdentity, setKleoIdentity] = useState<KleoIdentity>({ voice: 'buddy', grain: 30 });
+  const [kleoInitialPrompt, setKleoInitialPrompt] = useState<string | null>(null);
   const tiptapEditorRef = useRef<any>(null);
 
   // Load screenplay on mount
@@ -495,6 +510,17 @@ function EditorInner() {
       return;
     }
     incrementStuckCount();
+    setShowKleoPanel(true);
+  }, [kleoOnboarded]);
+
+  // Ambient margin note → open Kleo with the signal's pre-filled prompt
+  const handleMarginAskKleo = useCallback((signal: Signal) => {
+    if (!kleoOnboarded) {
+      setShowKleoOnboarding(true);
+      return;
+    }
+    setActiveSceneId(signal.sceneHeadingBlockId);
+    setKleoInitialPrompt(signal.askPrompt);
     setShowKleoPanel(true);
   }, [kleoOnboarded]);
 
@@ -952,14 +978,26 @@ function EditorInner() {
             identity={kleoIdentity}
             onIdentityChange={(id) => { setKleoIdentity(id); saveKleoIdentity(id); }}
             onNewMessage={handleKleoMessage}
-            onClose={() => setShowKleoPanel(false)}
+            onClose={() => { setShowKleoPanel(false); setKleoInitialPrompt(null); }}
             onInsertBlocks={handleKleoInsertBlocks}
             onReplaceSelection={handleKleoReplaceSelection}
             selectedText={kleoSelectedText || undefined}
             palette={palette}
+            initialPrompt={kleoInitialPrompt}
+            onInitialPromptConsumed={() => setKleoInitialPrompt(null)}
           />
         )}
       </div>
+
+      {/* Ambient Kleo — margin notes pinned to scenes */}
+      {doc && !isFullscreen && !isMobile && (
+        <KleoMargin
+          doc={doc}
+          palette={palette}
+          visible={!showKleoPanel && isWideViewport}
+          onAskKleo={handleMarginAskKleo}
+        />
+      )}
 
       {/* Story Spine — the shape of the script, at a glance */}
       {!isFullscreen && doc && (

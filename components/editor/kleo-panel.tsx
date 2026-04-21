@@ -101,6 +101,8 @@ interface KleoPanelProps {
   onReplaceSelection?: (blocks: ScreenplayBlock[]) => void;
   selectedText?: string;
   palette?: { paper: string; ink: string; inkFaint: string; cursor: string; headerBg: string; border: string; muted: string } | null;
+  initialPrompt?: string | null;                  // ambient margin → chat: pre-filled message
+  onInitialPromptConsumed?: () => void;
 }
 
 // Kleo's brand: terracotta stays constant
@@ -238,6 +240,7 @@ export function KleoPanel({
   onNewMessage, onClose,
   onInsertBlocks, onReplaceSelection,
   selectedText, palette,
+  initialPrompt, onInitialPromptConsumed,
 }: KleoPanelProps) {
   const c = colorsFromPalette(palette);
   const [input, setInput] = useState('');
@@ -293,6 +296,17 @@ export function KleoPanel({
       inputRef.current.focus();
     }
   }, [selectedText]);
+
+  // If opened from an ambient margin note, pre-fill the input with the signal's prompt
+  useEffect(() => {
+    if (initialPrompt) {
+      setInput(initialPrompt);
+      onInitialPromptConsumed?.();
+      // Focus input so the writer can edit or just hit Send
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPrompt]);
 
   // Focus input on open — Kleo stays silent until the writer speaks
   useEffect(() => {
