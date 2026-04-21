@@ -31,7 +31,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: "SceneFlow — Story Intelligence System",
-  description: "From idea to screenplay. Character discovery powered by AI.",
+  description: "A screenplay editor with Kleo, your AI co-writer.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

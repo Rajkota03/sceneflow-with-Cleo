@@ -31,11 +31,11 @@ import { KleoRecap } from '@/components/editor/kleo-recap';
 import { KleoPanel } from '@/components/editor/kleo-panel';
 import type { ScreenplayBlock } from '@/components/editor/kleo-panel';
 import {
-  getKleoMemory, saveKleoTaste, saveKleoStyle, isKleoOnboarded,
+  getKleoMemory, saveKleoTaste, saveKleoStyle, isKleoOnboarded, saveKleoIdentity,
   startKleoSession, endKleoSession, addKleoMessage, analyzeWritingStyle,
   incrementStuckCount,
 } from '@/lib/kleo-store';
-import type { KleoMessage, KleoTasteProfile, KleoWritingStyle, KleoSessionSnapshot } from '@/lib/kleo-store';
+import type { KleoMessage, KleoTasteProfile, KleoWritingStyle, KleoSessionSnapshot, KleoIdentity } from '@/lib/kleo-store';
 
 function useIsMobile(breakpoint = 768) {
   const [isMobile, setIsMobile] = useState(false);
@@ -75,6 +75,7 @@ function EditorInner() {
   const [subtitle, setSubtitle] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
 
   // Editor state
   const [scriptView, setScriptView] = useState<ScriptView>('page');
@@ -118,6 +119,7 @@ function EditorInner() {
   const [kleoStyle, setKleoStyle] = useState<KleoWritingStyle | null>(null);
   const [kleoConversations, setKleoConversations] = useState<KleoMessage[]>([]);
   const [kleoSelectedText, setKleoSelectedText] = useState('');
+  const [kleoIdentity, setKleoIdentity] = useState<KleoIdentity>({ voice: 'buddy', grain: 30 });
   const tiptapEditorRef = useRef<any>(null);
 
   // Load screenplay on mount
@@ -171,6 +173,32 @@ function EditorInner() {
       if (scenes.length > 0) setActiveSceneId(scenes[0].headingBlockId);
     }
   }, [projectId]);
+
+  // First-time welcome — show once if editor is empty
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const seen = localStorage.getItem('sceneflow_welcome_seen');
+    if (seen) return;
+    // Only show if screenplay is effectively empty (0-1 scenes with no real content)
+    if (screenplay && screenplay.scenes.length <= 1) {
+      const totalText = screenplay.scenes.reduce((acc, s) =>
+        acc + s.elements.reduce((a, e) => a + e.text.trim().length, 0), 0);
+      if (totalText < 20) setShowWelcome(true);
+    }
+  }, [screenplay]);
+
+  const dismissWelcome = useCallback(() => {
+    setShowWelcome(false);
+    localStorage.setItem('sceneflow_welcome_seen', '1');
+  }, []);
+
+  // Dismiss welcome on first keypress
+  useEffect(() => {
+    if (!showWelcome) return;
+    const handler = () => dismissWelcome();
+    window.addEventListener('keydown', handler, { once: true });
+    return () => window.removeEventListener('keydown', handler);
+  }, [showWelcome, dismissWelcome]);
 
   // Auto-save with debounce
   const persistScreenplay = useCallback((sp: Screenplay) => {
@@ -388,6 +416,7 @@ function EditorInner() {
     setKleoTaste(mem.taste);
     setKleoStyle(mem.style);
     setKleoConversations(mem.conversations);
+    if (mem.identity) setKleoIdentity(mem.identity);
 
     if (!onboarded) {
       setShowKleoOnboarding(true);
@@ -919,6 +948,8 @@ function EditorInner() {
             scenes={screenplay.scenes}
             activeSceneId={activeSceneId}
             conversations={kleoConversations}
+            identity={kleoIdentity}
+            onIdentityChange={(id) => { setKleoIdentity(id); saveKleoIdentity(id); }}
             onNewMessage={handleKleoMessage}
             onClose={() => setShowKleoPanel(false)}
             onInsertBlocks={handleKleoInsertBlocks}
@@ -1003,6 +1034,36 @@ function EditorInner() {
           message={kleoRecapMessage}
           onDismiss={() => setKleoRecapMessage(null)}
         />
+      )}
+
+      {/* First-time welcome */}
+      {showWelcome && (
+        <div
+          onClick={dismissWelcome}
+          style={{
+            position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 60, background: '#1e1d18', border: '1px solid rgba(200,189,160,0.12)',
+            borderRadius: 12, padding: '18px 28px', maxWidth: 420,
+            boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+            animation: 'fadeInUp 0.4s ease-out',
+          }}
+        >
+          <p style={{ fontSize: 13, color: '#c8bda0', lineHeight: 1.7, margin: 0 }}>
+            Type <kbd style={{ color: '#c45c4a', fontFamily: 'var(--font-mono)', fontSize: 12 }}>INT.</kbd> or <kbd style={{ color: '#c45c4a', fontFamily: 'var(--font-mono)', fontSize: 12 }}>EXT.</kbd> to start a scene.{' '}
+            <kbd style={{ color: '#c45c4a', fontFamily: 'var(--font-mono)', fontSize: 12 }}>Tab</kbd> cycles element types.{' '}
+            <kbd style={{ color: '#c45c4a', fontFamily: 'var(--font-mono)', fontSize: 12 }}>Enter</kbd> advances.{' '}
+            The <span style={{ color: '#c45c4a', fontWeight: 600 }}>K</span> button is Kleo — your co-writer.
+          </p>
+          <p style={{ fontSize: 10, color: '#4a4535', marginTop: 8, marginBottom: 0, textAlign: 'center' }}>
+            click or start typing to dismiss
+          </p>
+          <style>{`
+            @keyframes fadeInUp {
+              from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+              to { opacity: 1; transform: translateX(-50%) translateY(0); }
+            }
+          `}</style>
+        </div>
       )}
 
     </div>

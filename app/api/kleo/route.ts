@@ -27,15 +27,17 @@ export async function POST(request: Request) {
       return NextResponse.json(parsed);
     }
 
+    const identity = body.identity || { voice: 'buddy', grain: 30 };
+
     if (action === 'recap') {
-      const prompt = buildRecapPrompt(body.taste, body.lastSession, body.style, body.scenes);
+      const prompt = buildRecapPrompt(body.taste, body.lastSession, body.style, body.scenes, identity);
       const text = await callClaude(apiKey, prompt, 200);
       return NextResponse.json({ message: text });
     }
 
     if (action === 'stuck') {
       const scriptContext = buildScriptContext(body.scenes, body.activeSceneId);
-      const prompt = buildStuckPrompt(body.taste, body.style, scriptContext, body.conversations || []);
+      const prompt = buildStuckPrompt(body.taste, body.style, scriptContext, body.conversations || [], identity);
       const text = await callClaude(apiKey, prompt, 300);
       return NextResponse.json({ message: text });
     }
@@ -51,6 +53,7 @@ export async function POST(request: Request) {
         body.message,
         mode,
         body.selectedText,
+        identity,
       );
       // Script Doctor needs more tokens for screenplay blocks; Story Brain for analysis
       const maxTokens = mode === 'script-doctor' ? 1000 : mode === 'story-brain' ? 1200 : 600;

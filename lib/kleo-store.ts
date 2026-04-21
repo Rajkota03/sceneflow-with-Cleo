@@ -37,9 +37,17 @@ export interface KleoSessionSnapshot {
   mood?: string;                      // if ambient player was active
 }
 
+export type KleoVoice = 'mentor' | 'buddy';
+
+export interface KleoIdentity {
+  voice: KleoVoice;      // mentor (sharp, structural) or buddy (warm, conversational)
+  grain: number;         // 0-100 — language texture: 0 = plain/spoken, 100 = crafted/literary
+}
+
 export interface KleoMemory {
   taste: KleoTasteProfile | null;
   style: KleoWritingStyle | null;
+  identity: KleoIdentity;             // voice + name preference
   sessions: KleoSessionSnapshot[];    // last 10 sessions
   currentSessionStart: number | null;
   currentSessionWordStart: number;
@@ -71,12 +79,23 @@ function defaultMemory(): KleoMemory {
   return {
     taste: null,
     style: null,
+    identity: { voice: 'buddy', grain: 30 },
     sessions: [],
     currentSessionStart: null,
     currentSessionWordStart: 0,
     stuckCount: 0,
     conversations: [],
   };
+}
+
+export function getKleoIdentity(): KleoIdentity {
+  return readMemory().identity;
+}
+
+export function saveKleoIdentity(identity: KleoIdentity) {
+  const mem = readMemory();
+  mem.identity = identity;
+  writeMemory(mem);
 }
 
 function writeMemory(mem: KleoMemory) {

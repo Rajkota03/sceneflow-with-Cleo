@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { KleoMessage, KleoTasteProfile, KleoWritingStyle } from '@/lib/kleo-store';
+import type { KleoMessage, KleoTasteProfile, KleoWritingStyle, KleoIdentity, KleoVoice } from '@/lib/kleo-store';
 import type { KleoMode } from '@/lib/kleo-brain';
 import type { ScreenplayScene } from '@/lib/types';
 
@@ -44,23 +44,24 @@ function parseKleoResponse(text: string): ParsedResponse {
 
     const blockContent = remaining.slice(startIdx + '<screenplay>'.length, endIdx).trim();
     const blocks: ScreenplayBlock[] = [];
-    // Check for a label like "VERSION 1 (cold):" before the block
     let label: string | undefined;
 
-    for (const line of blockContent.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+    // Check for a leading label like "VERSION 1 (cold):"
+    const labelMatch = blockContent.match(/^(VERSION\s+\d+[^\n\[]*?):?\s*(?=\[|$)/i);
+    let body = blockContent;
+    if (labelMatch) {
+      label = labelMatch[1].trim();
+      body = blockContent.slice(labelMatch[0].length);
+    }
 
-      // Check for version labels
-      const labelMatch = trimmed.match(/^(VERSION\s+\d+.*?):?\s*$/i);
-      if (labelMatch) {
-        label = labelMatch[1];
-        continue;
-      }
-
-      const typeMatch = trimmed.match(/^\[(scene-heading|action|character|parenthetical|dialogue|transition)\]\s*(.*)$/);
-      if (typeMatch) {
-        blocks.push({ type: typeMatch[1] as ScreenplayBlock['type'], text: typeMatch[2] });
+    // Parse [type] markers regardless of newlines — model often emits inline
+    const typeRegex = /\[(scene-heading|action|character|parenthetical|dialogue|transition)\]\s*([^\[]*)/g;
+    let m: RegExpExecArray | null;
+    while ((m = typeRegex.exec(body)) !== null) {
+      const type = m[1] as ScreenplayBlock['type'];
+      const text = m[2].trim();
+      if (text || type === 'parenthetical') {
+        blocks.push({ type, text });
       }
     }
 
@@ -92,6 +93,8 @@ interface KleoPanelProps {
   scenes: ScreenplayScene[];
   activeSceneId: string | null;
   conversations: KleoMessage[];
+  identity: KleoIdentity;
+  onIdentityChange: (identity: KleoIdentity) => void;
   onNewMessage: (msg: KleoMessage) => void;
   onClose: () => void;
   onInsertBlocks?: (blocks: ScreenplayBlock[]) => void;
@@ -212,14 +215,14 @@ function ScreenplayBlockCard({
           <button
             onClick={() => onInsert(blocks)}
             style={{
-              padding: '4px 10px', fontSize: 10, fontWeight: 600,
-              background: `${colors.accent}15`, color: colors.accent,
-              border: `1px solid ${colors.accent}33`, borderRadius: 4,
+              padding: '5px 12px', fontSize: 10, fontWeight: 700,
+              background: colors.accent, color: '#fff',
+              border: 'none', borderRadius: 4,
               cursor: 'pointer', fontFamily: 'var(--font-sans)',
-              letterSpacing: '0.03em',
+              letterSpacing: '0.05em', textTransform: 'uppercase',
             }}
           >
-            Insert ↗
+            Try ↗
           </button>
         )}
       </div>
@@ -231,7 +234,8 @@ function ScreenplayBlockCard({
 
 export function KleoPanel({
   taste, style, scenes, activeSceneId,
-  conversations, onNewMessage, onClose,
+  conversations, identity, onIdentityChange,
+  onNewMessage, onClose,
   onInsertBlocks, onReplaceSelection,
   selectedText, palette,
 }: KleoPanelProps) {
@@ -242,9 +246,46 @@ export function KleoPanel({
   const [typingText, setTypingText] = useState('');
   const [mode, setMode] = useState<KleoMode>(selectedText ? 'script-doctor' : 'sounding-board');
   const [modeAutoDetected, setModeAutoDetected] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [loadingReaction, setLoadingReaction] = useState('');
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const typingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingRafRef = useRef<number | null>(null);
+  const settingsPopoverRef = useRef<HTMLDivElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Close settings popover on outside click / Escape
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        settingsPopoverRef.current?.contains(target) ||
+        settingsButtonRef.current?.contains(target)
+      ) return;
+      setSettingsOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSettingsOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [settingsOpen]);
+
+  // Voice-appropriate "thinking" reactions — picked randomly each time
+  const BUDDY_REACTIONS = [
+    'hmm let me think', 'okay okay…', 'oh wait…', 'hold on…',
+    'mm, gimme a sec', 'thinking thinking', 'okay so…',
+  ];
+  const MENTOR_REACTIONS = [
+    'reading the page', 'one sec', 'looking at it',
+    'checking the script', 'working on it', 'reviewing',
+  ];
 
   // If opened with selected text, pre-fill context
   useEffect(() => {
@@ -270,6 +311,9 @@ export function KleoPanel({
     onNewMessage(writerMsg);
     setInput('');
     setLoading(true);
+    // Pick a voice-appropriate reaction
+    const pool = identity.voice === 'mentor' ? MENTOR_REACTIONS : BUDDY_REACTIONS;
+    setLoadingReaction(pool[Math.floor(Math.random() * pool.length)]);
 
     try {
       const res = await fetch('/api/kleo', {
@@ -278,13 +322,19 @@ export function KleoPanel({
         body: JSON.stringify({
           action: 'chat', taste, style, scenes, activeSceneId,
           conversations: [...conversations, writerMsg],
-          message: text, mode: activeMode, selectedText,
+          message: text, mode: activeMode, selectedText, identity,
         }),
       });
       const data = await res.json();
       const kleoMsg: KleoMessage = { role: 'kleo', text: data.message, timestamp: Date.now(), context: 'chat' };
       onNewMessage(kleoMsg);
-      typeMessage(data.message);
+      // Skip typewriter for screenplay responses — they should pop in formatted, not type out raw tags
+      if (data.message.includes('<screenplay>')) {
+        setTypingText('');
+        inputRef.current?.focus();
+      } else {
+        typeMessage(data.message);
+      }
     } catch {
       onNewMessage({
         role: 'kleo',
@@ -293,26 +343,60 @@ export function KleoPanel({
       });
     }
     setLoading(false);
-  }, [input, loading, taste, style, scenes, activeSceneId, conversations, onNewMessage, mode, modeAutoDetected, selectedText]);
+  }, [input, loading, taste, style, scenes, activeSceneId, conversations, onNewMessage, mode, modeAutoDetected, selectedText, identity]);
 
   const typeMessage = (text: string) => {
-    if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    if (typingRafRef.current) cancelAnimationFrame(typingRafRef.current);
     setTypingText('');
-    let i = 0;
-    // Faster typing for longer responses, snappy for short ones
-    const speed = text.length > 200 ? 4 : text.length > 100 ? 8 : 14;
-    typingIntervalRef.current = setInterval(() => {
-      if (i < text.length) {
-        // Jump multiple chars at a time for very long responses
-        const step = text.length > 300 ? 3 : 1;
-        i = Math.min(i + step, text.length);
-        setTypingText(text.slice(0, i));
-      } else {
-        if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
-        setTypingText('');
-        inputRef.current?.focus();
+
+    // Reading-paced reveal: ~42 chars/sec (~420 wpm) — slightly faster than
+    // average reading so the eye is led along, not waiting. Smooth via rAF —
+    // no jitter, no metronome feel. Punctuation gets a small gate so each
+    // sentence "lands" before the next one starts.
+    const CHARS_PER_MS = 0.042;
+    const startTime = performance.now();
+    let gateUntil = 0;
+    let lastRevealedIdx = 0;
+
+    const frame = (now: number) => {
+      // How many chars *should* be visible by now, ignoring gates
+      const elapsed = now - startTime;
+      const target = Math.min(text.length, Math.floor(elapsed * CHARS_PER_MS));
+
+      // If we're inside a punctuation gate, don't reveal past the gate point
+      const reveal = now < gateUntil ? lastRevealedIdx : target;
+
+      if (reveal !== lastRevealedIdx) {
+        lastRevealedIdx = reveal;
+        setTypingText(text.slice(0, reveal));
+
+        // After revealing, check if the last char triggers a breath gate
+        const lastChar = text[reveal - 1];
+        const nextChar = text[reveal];
+        if ((lastChar === '.' || lastChar === '?' || lastChar === '!') &&
+            (nextChar === ' ' || nextChar === '\n' || nextChar === undefined)) {
+          gateUntil = now + 220;
+        } else if (lastChar === ',' || lastChar === ';' || lastChar === ':') {
+          gateUntil = now + 90;
+        } else if (lastChar === '—') {
+          gateUntil = now + 120;
+        } else if (lastChar === '\n') {
+          gateUntil = now + 140;
+        }
       }
-    }, speed);
+
+      if (reveal >= text.length) {
+        setTypingText(text);
+        typingRafRef.current = null;
+        inputRef.current?.focus();
+        return;
+      }
+
+      typingRafRef.current = requestAnimationFrame(frame);
+    };
+
+    typingRafRef.current = requestAnimationFrame(frame);
   };
 
   // Scroll to bottom on new messages
@@ -329,9 +413,12 @@ export function KleoPanel({
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  // Cleanup typing interval
+  // Cleanup typing timers
   useEffect(() => {
-    return () => { if (typingIntervalRef.current) clearInterval(typingIntervalRef.current); };
+    return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (typingRafRef.current) cancelAnimationFrame(typingRafRef.current);
+    };
   }, []);
 
   // Filter messages
@@ -383,6 +470,7 @@ export function KleoPanel({
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '12px 18px', borderBottom: `1px solid ${c.border}`,
+        position: 'relative',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
@@ -391,10 +479,33 @@ export function KleoPanel({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 12, fontWeight: 700, color: '#fff',
           }}>K</div>
-          <span style={{ fontSize: 12, fontWeight: 600, color: c.accent, letterSpacing: '0.06em' }}>KLEO</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: c.accent, letterSpacing: '0.06em' }}>
+              KLEO
+            </span>
+            <span style={{ fontSize: 9, color: c.muted, letterSpacing: '0.05em' }}>
+              {identity.voice === 'mentor' ? 'MENTOR' : 'BUDDY'}
+            </span>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button
+            ref={settingsButtonRef}
+            onClick={() => setSettingsOpen(s => !s)}
+            title="Voice"
+            style={{
+              background: settingsOpen ? `${c.accent}15` : 'none', border: 'none',
+              color: settingsOpen ? c.accent : c.muted,
+              cursor: 'pointer', padding: '4px 6px', borderRadius: 4, lineHeight: 1,
+              transition: 'all 0.15s',
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <circle cx="8" cy="8" r="2"/>
+              <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M3 13l1.4-1.4M11.6 4.4L13 3"/>
+            </svg>
+          </button>
           <button
             onClick={onClose}
             style={{
@@ -403,6 +514,88 @@ export function KleoPanel({
             }}
           >×</button>
         </div>
+
+        {/* Settings popover */}
+        {settingsOpen && (
+          <div ref={settingsPopoverRef} style={{
+            position: 'absolute', top: '100%', right: 12, marginTop: 6, zIndex: 50,
+            background: c.bg, border: `1px solid ${c.border}`,
+            borderRadius: 10, padding: 14, width: 270,
+            boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+          }}>
+            <div style={{ fontSize: 9, color: c.muted, letterSpacing: '0.1em', fontWeight: 600, marginBottom: 6 }}>
+              VOICE
+            </div>
+            {([
+              { id: 'buddy' as KleoVoice, label: 'Buddy', desc: 'Warm. Conversational. The friend in the room.' },
+              { id: 'mentor' as KleoVoice, label: 'Mentor', desc: 'Sharp. Structural. The note that points at the page.' },
+            ]).map(v => {
+              const isActive = identity.voice === v.id;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => onIdentityChange({ ...identity, voice: v.id })}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '8px 10px', marginBottom: 4,
+                    background: isActive ? `${c.accent}15` : 'rgba(255,255,255,0.02)',
+                    border: `1px solid ${isActive ? `${c.accent}33` : c.border}`,
+                    borderRadius: 6, cursor: 'pointer',
+                    fontFamily: 'var(--font-sans)',
+                  }}
+                >
+                  <div style={{ fontSize: 11, fontWeight: 600, color: isActive ? c.accent : c.ink, marginBottom: 2 }}>
+                    {v.label}
+                  </div>
+                  <div style={{ fontSize: 10, color: c.faint, lineHeight: 1.4 }}>
+                    {v.desc}
+                  </div>
+                </button>
+              );
+            })}
+
+            {/* Grain slider — language texture */}
+            <div style={{ marginTop: 14, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div style={{ fontSize: 9, color: c.muted, letterSpacing: '0.1em', fontWeight: 600 }}>
+                GRAIN
+              </div>
+              <div style={{ fontSize: 9, color: c.faint, fontStyle: 'italic' }}>
+                {(identity.grain ?? 30) <= 33 ? 'Plain' : (identity.grain ?? 30) <= 66 ? 'Natural' : 'Crafted'}
+              </div>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={identity.grain ?? 30}
+              onChange={e => onIdentityChange({ ...identity, grain: Number(e.target.value) })}
+              style={{
+                width: '100%', accentColor: c.accent, cursor: 'pointer',
+                height: 4, marginBottom: 4,
+              }}
+            />
+            <div style={{
+              display: 'flex', justifyContent: 'space-between',
+              fontSize: 8, color: c.muted, letterSpacing: '0.05em',
+            }}>
+              <span>SPOKEN</span>
+              <span>LITERARY</span>
+            </div>
+            <div style={{ fontSize: 10, color: c.faint, lineHeight: 1.4, marginTop: 8 }}>
+              {identity.voice === 'mentor'
+                ? ((identity.grain ?? 30) <= 33
+                  ? 'Plain, direct notes. The kind a director gives between takes.'
+                  : (identity.grain ?? 30) <= 66
+                  ? 'Clear notes with the occasional sharp image when it earns its place.'
+                  : 'Notes with weight. Picks the precise word, not the easy one.')
+                : ((identity.grain ?? 30) <= 33
+                  ? 'Short words. Like texting a friend who gets it.'
+                  : (identity.grain ?? 30) <= 66
+                  ? 'Plain talk, with a sharp image when something hits.'
+                  : 'Lets the language breathe. Picks the right word, not the easy one.')}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Mode buttons */}
@@ -485,12 +678,14 @@ export function KleoPanel({
               </div>
             )}
             <div style={{
-              fontSize: msg.role === 'kleo' ? 13 : 12,
-              lineHeight: 1.7,
+              fontSize: msg.role === 'kleo' ? 14 : 12,
+              lineHeight: msg.role === 'kleo' ? 1.65 : 1.6,
               color: msg.role === 'kleo' ? c.ink : c.faint,
               background: msg.role === 'writer' ? 'rgba(255,255,255,0.04)' : 'transparent',
               padding: msg.role === 'writer' ? '6px 10px' : '0',
               borderRadius: msg.role === 'writer' ? 6 : 0,
+              fontFamily: msg.role === 'kleo' ? 'Georgia, "Iowan Old Style", serif' : 'inherit',
+              wordSpacing: msg.role === 'kleo' ? '0.02em' : 'normal',
             }}>
               {msg.role === 'kleo' ? renderMessageContent(msg.text) : msg.text}
             </div>
@@ -503,21 +698,32 @@ export function KleoPanel({
             <div style={{ fontSize: 9, color: c.muted, marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               Kleo
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.7, color: c.ink }}>
+            <div style={{
+              fontSize: 14, lineHeight: 1.65, color: c.ink,
+              fontFamily: 'Georgia, "Iowan Old Style", serif',
+              wordSpacing: '0.02em',
+            }}>
               {renderMessageContent(typingText, true)}
             </div>
           </div>
         )}
 
-        {/* Loading pulse */}
+        {/* Loading reaction — voice-aware, in character */}
         {loading && !typingText && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{
-              width: 6, height: 6, borderRadius: '50%', background: c.accent,
-              animation: 'pulse 1.5s infinite',
-            }} />
-            <span style={{ fontSize: 10, color: c.muted, fontStyle: 'italic' }}>
-              thinking...
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{
+              fontSize: 12, color: c.faint, fontStyle: 'italic',
+              fontFamily: 'Georgia, serif', letterSpacing: '0.01em',
+              animation: 'kleoBreathe 1.8s ease-in-out infinite',
+            }}>
+              {loadingReaction}
+            </span>
+            <span style={{
+              display: 'inline-flex', gap: 2,
+            }}>
+              <span style={{ width: 3, height: 3, borderRadius: '50%', background: c.accent, animation: 'kleoDot 1.4s ease-in-out infinite', animationDelay: '0s' }} />
+              <span style={{ width: 3, height: 3, borderRadius: '50%', background: c.accent, animation: 'kleoDot 1.4s ease-in-out infinite', animationDelay: '0.2s' }} />
+              <span style={{ width: 3, height: 3, borderRadius: '50%', background: c.accent, animation: 'kleoDot 1.4s ease-in-out infinite', animationDelay: '0.4s' }} />
             </span>
           </div>
         )}
@@ -562,6 +768,11 @@ export function KleoPanel({
         @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes blink { 0%, 50% { opacity: 0.4; } 51%, 100% { opacity: 0; } }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes kleoBreathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.95; } }
+        @keyframes kleoDot {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+          40% { transform: translateY(-3px); opacity: 1; }
+        }
       `}</style>
     </div>
   );
