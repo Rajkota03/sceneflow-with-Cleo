@@ -13,6 +13,7 @@ import { screenplayToDoc, docToScreenplay, createBlock, createDoc, docToPdf, der
 import { autoSave as autoSaveDoc } from '@/lib/doc';
 import { getSession, getSessions } from '@/lib/session-store';
 import { StorySpine } from '@/components/editor/story-spine';
+import { StoryRoom } from '@/components/editor/story-room';
 import { KleoMargin } from '@/components/editor/kleo-margin';
 import type { Signal } from '@/lib/kleo-signals';
 import { BeatSheet } from '@/components/editor/beat-sheet';
@@ -29,12 +30,11 @@ import { ExportDialog } from '@/components/editor/export-dialog';
 import type { ExportOptions } from '@/components/editor/export-dialog';
 import { DraftSnapshots } from '@/components/editor/draft-snapshots';
 import { CharacterFilter } from '@/components/editor/character-filter';
-import { KleoOnboarding } from '@/components/editor/kleo-onboarding';
 import { KleoRecap } from '@/components/editor/kleo-recap';
 import { KleoPanel } from '@/components/editor/kleo-panel';
 import type { ScreenplayBlock } from '@/components/editor/kleo-panel';
 import {
-  getKleoMemory, saveKleoTaste, saveKleoStyle, isKleoOnboarded, saveKleoIdentity,
+  getKleoMemory, saveKleoTaste, saveKleoStyle, saveKleoIdentity,
   startKleoSession, endKleoSession, addKleoMessage, analyzeWritingStyle,
   incrementStuckCount,
 } from '@/lib/kleo-store';
@@ -126,8 +126,6 @@ function EditorInner() {
   const [showCharFilter, setShowCharFilter] = useState(false);
 
   // Kleo state
-  const [kleoOnboarded, setKleoOnboarded] = useState(true); // assume true until checked
-  const [showKleoOnboarding, setShowKleoOnboarding] = useState(false);
   const [showKleoPanel, setShowKleoPanel] = useState(false);
   const [kleoRecapMessage, setKleoRecapMessage] = useState<string | null>(null);
   const [kleoTaste, setKleoTaste] = useState<KleoTasteProfile | null>(null);
@@ -136,6 +134,7 @@ function EditorInner() {
   const [kleoSelectedText, setKleoSelectedText] = useState('');
   const [kleoIdentity, setKleoIdentity] = useState<KleoIdentity>({ voice: 'buddy', grain: 30 });
   const [kleoInitialPrompt, setKleoInitialPrompt] = useState<string | null>(null);
+  const [storyRoomOpen, setStoryRoomOpen] = useState(false);
   const tiptapEditorRef = useRef<any>(null);
 
   // Load screenplay on mount
@@ -423,21 +422,28 @@ function EditorInner() {
     return () => window.removeEventListener('keydown', handler);
   }, [isFullscreen]);
 
-  // Kleo initialization — check onboarding, start session, fetch recap
+  // Kleo initialization — seed a default taste if none, start session, fetch recap
   useEffect(() => {
     if (!screenplay) return;
     const mem = getKleoMemory();
-    const onboarded = isKleoOnboarded();
-    setKleoOnboarded(onboarded);
-    setKleoTaste(mem.taste);
     setKleoStyle(mem.style);
     setKleoConversations(mem.conversations);
     if (mem.identity) setKleoIdentity(mem.identity);
 
-    if (!onboarded) {
-      setShowKleoOnboarding(true);
-      return;
+    // No onboarding — just ensure a minimal taste profile exists so prompts don't break.
+    // Writers shape Kleo via the Voice/Grain settings in the panel, not a quiz.
+    let taste = mem.taste;
+    if (!taste) {
+      taste = {
+        films: [],
+        filmAnalysis: 'Taste not declared — Kleo learns from what you write.',
+        writerIdentity: 'Working on a screenplay.',
+        personality: 'gentle',
+        onboardedAt: Date.now(),
+      };
+      saveKleoTaste(taste);
     }
+    setKleoTaste(taste);
 
     // Analyze writing style
     if (screenplay.scenes.length > 0) {
@@ -478,51 +484,22 @@ function EditorInner() {
     }
   };
 
-  const handleKleoOnboardingComplete = useCallback((taste: KleoTasteProfile) => {
-    saveKleoTaste(taste);
-    setKleoTaste(taste);
-    setKleoOnboarded(true);
-    setShowKleoOnboarding(false);
-
-    // Analyze style now
-    if (screenplay && screenplay.scenes.length > 0) {
-      const style = analyzeWritingStyle(screenplay.scenes);
-      saveKleoStyle(style);
-      setKleoStyle(style);
-    }
-
-    // Start session
-    const allText = screenplay?.scenes.map(s =>
-      s.heading + ' ' + s.elements.map(e => e.text).join(' ')
-    ).join(' ') ?? '';
-    const wc = allText.trim() ? allText.trim().split(/\s+/).length : 0;
-    startKleoSession(wc);
-  }, [screenplay]);
-
   const handleKleoMessage = useCallback((msg: KleoMessage) => {
     addKleoMessage(msg);
     setKleoConversations(prev => [...prev, msg].slice(-20));
   }, []);
 
   const handleOpenKleo = useCallback(() => {
-    if (!kleoOnboarded) {
-      setShowKleoOnboarding(true);
-      return;
-    }
     incrementStuckCount();
     setShowKleoPanel(true);
-  }, [kleoOnboarded]);
+  }, []);
 
   // Ambient margin note → open Kleo with the signal's pre-filled prompt
   const handleMarginAskKleo = useCallback((signal: Signal) => {
-    if (!kleoOnboarded) {
-      setShowKleoOnboarding(true);
-      return;
-    }
     setActiveSceneId(signal.sceneHeadingBlockId);
     setKleoInitialPrompt(signal.askPrompt);
     setShowKleoPanel(true);
-  }, [kleoOnboarded]);
+  }, []);
 
   // Kleo → Editor: convert ScreenplayBlock[] to TipTap JSON nodes
   const kleoBlocksToTiptapContent = useCallback((blocks: ScreenplayBlock[]) => {
@@ -810,6 +787,22 @@ function EditorInner() {
                 opacity: panelView === p.id ? 1 : 0.5,
               }}>{p.label}</button>
             ))}
+
+            {/* Story Room — pre-writing scratchpad, separate mode */}
+            <div style={{ width: 1, height: 16, background: palette?.border ?? 'rgba(200,189,160,0.10)', margin: '0 4px' }} />
+            <button
+              onClick={() => setStoryRoomOpen(true)}
+              title="Story Room — ideas before scenes"
+              style={{
+                padding: '5px 10px', fontSize: 12, borderRadius: 5,
+                background: storyRoomOpen ? 'rgba(196,92,74,0.15)' : 'transparent',
+                color: storyRoomOpen ? (palette?.cursor ?? '#c45c4a') : (palette?.ink ?? '#c8bda0'),
+                border: 'none', cursor: 'pointer',
+                fontWeight: 600, transition: 'all 0.15s', letterSpacing: '0.02em',
+                opacity: storyRoomOpen ? 1 : 0.65,
+                fontStyle: 'italic', fontFamily: 'Georgia, serif',
+              }}
+            >Room</button>
           </div>
 
           {/* ── Right: stats + tools ── */}
@@ -1070,13 +1063,20 @@ function EditorInner() {
         defaultTitle={doc?.title || screenplay?.title || 'Untitled Screenplay'}
       />
 
-      {/* Kleo Onboarding */}
-      {showKleoOnboarding && (
-        <KleoOnboarding onComplete={handleKleoOnboardingComplete} />
+      {/* Story Room — the pile before the pages */}
+      {storyRoomOpen && kleoTaste && screenplay && (
+        <StoryRoom
+          open={storyRoomOpen}
+          scenes={screenplay.scenes}
+          identity={kleoIdentity}
+          taste={kleoTaste}
+          palette={palette}
+          onClose={() => setStoryRoomOpen(false)}
+        />
       )}
 
       {/* Kleo Session Recap */}
-      {kleoRecapMessage && !showKleoOnboarding && (
+      {kleoRecapMessage && (
         <KleoRecap
           message={kleoRecapMessage}
           onDismiss={() => setKleoRecapMessage(null)}

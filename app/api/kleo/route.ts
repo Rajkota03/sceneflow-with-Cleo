@@ -5,6 +5,8 @@ import {
   buildStuckPrompt,
   buildChatPrompt,
   buildScriptContext,
+  buildRoomPlacePrompt,
+  buildRoomSummaryPrompt,
 } from '@/lib/kleo-brain';
 import type { KleoMode } from '@/lib/kleo-brain';
 
@@ -61,10 +63,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: text });
     }
 
+    if (action === 'room-place') {
+      // body: { noteText, scenes, identity }
+      const prompt = buildRoomPlacePrompt(body.noteText, body.scenes, identity);
+      const text = await callClaude(apiKey, prompt, 400);
+      const parsed = safeJson(text, { suggestions: [] });
+      return NextResponse.json(parsed);
+    }
+
+    if (action === 'room-summary') {
+      // body: { notes, scenes, identity, taste }
+      const prompt = buildRoomSummaryPrompt(body.notes, body.scenes, identity, body.taste);
+      const text = await callClaude(apiKey, prompt, 600);
+      const parsed = safeJson(text, { paragraph: text, threads: [] });
+      return NextResponse.json(parsed);
+    }
+
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (err) {
     console.error('Kleo API error:', err);
     return handleWithoutAI(action, body);
+  }
+}
+
+// Some model outputs wrap JSON in prose or code fences — extract + parse safely.
+function safeJson<T>(text: string, fallback: T): T {
+  try {
+    const trimmed = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
+    const start = trimmed.indexOf('{');
+    const end = trimmed.lastIndexOf('}');
+    if (start === -1 || end === -1) return fallback;
+    return JSON.parse(trimmed.slice(start, end + 1)) as T;
+  } catch {
+    return fallback;
   }
 }
 
@@ -144,6 +175,31 @@ function handleWithoutAI(action: string, body: Record<string, unknown>) {
     return NextResponse.json({
       message: "Tell me more about what you're going for in this moment. What should the audience feel?"
     });
+  }
+
+  if (action === 'room-place') {
+    const scenes = (body.scenes as Array<{ heading: string }>) || [];
+    const suggestions: Array<{ anchorType: string; sceneIndex: number | null; reason: string }> = [];
+    if (scenes.length === 0) {
+      suggestions.push({ anchorType: 'floating', sceneIndex: null, reason: 'No scenes yet — keep it in the pile until one shows up.' });
+    } else {
+      const mid = Math.max(1, Math.floor(scenes.length / 2));
+      suggestions.push(
+        { anchorType: 'after-scene', sceneIndex: mid, reason: 'Sits near the middle of what you have. Could give the script a hinge.' },
+        { anchorType: 'version-of', sceneIndex: mid, reason: 'Try it as an alternate take on a scene you\'ve already written.' },
+        { anchorType: 'floating', sceneIndex: null, reason: 'Not sure yet — let it breathe in the pile.' },
+      );
+    }
+    return NextResponse.json({ suggestions });
+  }
+
+  if (action === 'room-summary') {
+    const notes = (body.notes as Array<{ text: string }>) || [];
+    const scenes = (body.scenes as Array<{ heading: string }>) || [];
+    const paragraph = notes.length === 0
+      ? `No notes in the room yet. Drop what's in your head — the half-thoughts, the images, the ones that won't leave. I'll tell you what's shaping up.`
+      : `You've got ${notes.length} note${notes.length === 1 ? '' : 's'} and ${scenes.length} scene${scenes.length === 1 ? '' : 's'} on the board. Something's forming — keep adding. Ask me again when there's more to read.`;
+    return NextResponse.json({ paragraph, threads: [] });
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });

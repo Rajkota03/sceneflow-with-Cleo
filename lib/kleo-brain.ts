@@ -262,6 +262,73 @@ ${recentKleo ? `What you've already said:\n${recentKleo}\n\nDon't repeat yoursel
 Two or three sentences. Specific. Sounds like a person.`;
 }
 
+// ── Story Room prompts ──
+
+export function buildRoomPlacePrompt(
+  noteText: string,
+  scenes: ScreenplayScene[],
+  identity: KleoIdentity = { voice: 'buddy', grain: 30 },
+): string {
+  const KLEO_CORE = buildKleoCore(identity);
+  const sceneList = scenes.length === 0
+    ? 'The script has no scenes yet.'
+    : scenes.map((s, i) => `Scene ${i + 1}: ${s.heading} (id: ${s.id})`).join('\n');
+
+  return `${KLEO_CORE}
+
+The writer is in the Story Room — the scratchpad for ideas that haven't become scenes yet.
+They've just written this note:
+
+"${noteText}"
+
+Here's the current script:
+${sceneList}
+
+Pick 2 or 3 places this idea could live. For each, pick an anchor type and (if applicable) the 1-based scene index:
+  - "floating" — not ready to place it, keep it in the pile
+  - "before-scene" — belongs right before scene N
+  - "after-scene" — belongs right after scene N
+  - "inside-scene" — expands or lives within scene N
+  - "version-of" — an alternate take on scene N
+
+Always include at least one "floating" option so the writer can bail out.
+For each placement, give ONE short sentence on why — a real reason, not filler.
+
+Respond JSON only, no prose wrapper:
+{"suggestions":[{"anchorType":"before-scene|after-scene|inside-scene|version-of|floating","sceneIndex":null|number,"reason":"one sentence"}]}`;
+}
+
+export function buildRoomSummaryPrompt(
+  notes: Array<{ text: string; anchor: string }>,
+  scenes: ScreenplayScene[],
+  identity: KleoIdentity = { voice: 'buddy', grain: 30 },
+  taste?: KleoTasteProfile | null,
+): string {
+  const KLEO_CORE = buildKleoCore(identity);
+  const tasteCtx = taste ? `\n${buildTasteContext(taste)}\n` : '';
+  const sceneBrief = scenes.length === 0
+    ? 'No scenes written yet.'
+    : `${scenes.length} scenes so far:\n` + scenes.map((s, i) => `${i + 1}. ${s.heading}`).join('\n');
+  const notesBrief = notes.length === 0
+    ? 'No notes yet.'
+    : notes.map((n, i) => `${i + 1}. [${n.anchor}] ${n.text}`).join('\n');
+
+  return `${KLEO_CORE}
+${tasteCtx}
+Read the writer's pile. Notes + scenes together — what story is taking shape?
+
+Scenes:
+${sceneBrief}
+
+Notes:
+${notesBrief}
+
+Write a short read (3-5 sentences, in your voice) of what this is becoming. Honest, specific — what's emerging, what's missing, what the pile is circling. Then list up to 5 threads you see — short noun phrases like "father-daughter guilt" or "water as memory."
+
+Respond JSON only:
+{"paragraph":"...","threads":["...","..."]}`;
+}
+
 export function buildChatPrompt(
   taste: KleoTasteProfile,
   style: KleoWritingStyle | null,
