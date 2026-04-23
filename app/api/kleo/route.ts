@@ -12,8 +12,13 @@ import {
   validateGrounded,
   buildReaderPrompt,
   buildCanvasContextForReader,
+  buildProseParsePrompt,
   type GroundedObservation,
 } from '@/lib/canvas-grounded';
+import {
+  enforceWordingPreservation,
+  type RawProposedCard,
+} from '@/lib/canvas-import-validator';
 import type { KleoMode } from '@/lib/kleo-brain';
 
 export async function POST(request: Request) {
@@ -113,6 +118,25 @@ export async function POST(request: Request) {
       }
       // All attempts failed — better silence than slop
       return NextResponse.json({ observation: null, _suppressed: true });
+    }
+
+    if (action === 'import-parse-prose') {
+      // body: { source: string, parseHint?: string, identity? }
+      const source = (body.source as string) || '';
+      const parseHint = (body.parseHint as string) || 'auto';
+      if (!source.trim()) {
+        return NextResponse.json({ proposals: [], rejectedCount: 0 });
+      }
+      const prompt = buildProseParsePrompt(source, parseHint);
+      const text = await callClaude(apiKey, prompt, 2000);
+      const parsed = safeJson<{ proposals: RawProposedCard[] }>(text, { proposals: [] });
+      const raws = Array.isArray(parsed.proposals) ? parsed.proposals : [];
+      const diag = enforceWordingPreservation(source, raws);
+      const proposals = diag.accepted.map((p, i) => ({ ...p, sourcePassageRef: `p_${i}` }));
+      return NextResponse.json({
+        proposals,
+        rejectedCount: diag.rejected.length,
+      });
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
@@ -236,6 +260,27 @@ function handleWithoutAI(action: string, body: Record<string, unknown>) {
       ? `No notes in the room yet. Drop what's in your head — the half-thoughts, the images, the ones that won't leave. I'll tell you what's shaping up.`
       : `You've got ${notes.length} note${notes.length === 1 ? '' : 's'} and ${scenes.length} scene${scenes.length === 1 ? '' : 's'} on the board. Something's forming — keep adding. Ask me again when there's more to read.`;
     return NextResponse.json({ paragraph, threads: [] });
+  }
+
+  if (action === 'import-parse-prose') {
+    // Offline heuristic: split on blank lines, each non-trivial chunk becomes a fragment card.
+    // Preserves wording by construction (we only slice, never rewrite).
+    const source = (body.source as string) || '';
+    const chunks = source.split(/\n\s*\n/).map(s => s.trim()).filter(s => s.length >= 10).slice(0, 60);
+    let offset = 0;
+    const proposals = chunks.map((text, i) => {
+      const start = source.indexOf(text, offset);
+      const end = start >= 0 ? start + text.length : text.length;
+      if (start >= 0) offset = end;
+      return {
+        text,
+        sourcePassageRef: `p_${i}`,
+        sourceStart: start >= 0 ? start : 0,
+        sourceEnd: start >= 0 ? end : text.length,
+        suggestedType: 'fragment' as const,
+      };
+    });
+    return NextResponse.json({ proposals, rejectedCount: 0 });
   }
 
   if (action === 'canvas-reader') {

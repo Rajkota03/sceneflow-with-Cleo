@@ -130,3 +130,52 @@ ${context}
 
 ${actionInstruction}`;
 }
+
+// ── Prose Import Parser ──
+//
+// Parses arbitrary prose (paste, DOCX, MD) into proposed cards.
+// Contract: the model may SPLIT and CLASSIFY; it MUST NOT rewrite, summarize,
+// or paraphrase. Every proposal.text must be a verbatim substring of the
+// source. A post-validator (canvas-import-validator) enforces this.
+
+type ParseHint = 'auto' | 'beat_sheet' | 'outline' | 'notes' | 'paragraph' | string;
+
+const PARSE_HINT_INSTRUCTION: Record<string, string> = {
+  auto:       'Decide the right granularity yourself. If the document is numbered, parse beats. If it has scene headings, parse scenes. If it is loose notes, parse distinct ideas. If it is continuous prose, parse paragraphs.',
+  beat_sheet: 'This is a beat sheet. Produce one card per numbered beat. Do not combine beats.',
+  outline:    'This is an outline. Produce one card per scene heading / bullet / numbered item.',
+  notes:      'These are loose notes. Produce one card per distinct idea. Adjacent lines about the same idea stay together; a shift in topic starts a new card.',
+  paragraph:  'Produce one card per paragraph (paragraphs separated by blank lines).',
+};
+
+/**
+ * Build a prose-parse prompt for Claude.
+ * The source is wrapped in delimiters so the model can compute char offsets
+ * relative to the raw source text.
+ */
+export function buildProseParsePrompt(source: string, parseHint: ParseHint): string {
+  const instruction = PARSE_HINT_INSTRUCTION[parseHint] ?? PARSE_HINT_INSTRUCTION.auto;
+
+  return `You are parsing a writer's document into proposed cards for their canvas.
+
+CONTRACT — READ CAREFULLY:
+- You MUST preserve the writer's original wording. Every proposal.text must be an EXACT substring of the source.
+- You may SPLIT paragraphs into multiple cards when they contain distinct ideas.
+- You may CLASSIFY each card as one of: 'beat' | 'moment' | 'question' | 'fragment'. If unsure, use 'fragment'.
+- You MUST NOT rewrite, summarize, paraphrase, translate, fix typos, or clean up grammar. Zero rewriting.
+- For each proposal, compute sourceStart and sourceEnd as character offsets into the source (0-indexed, sourceEnd exclusive). The substring source.slice(sourceStart, sourceEnd) must equal proposal.text.
+- Skip empty lines, headings that are just labels ("ACT ONE"), and anything under 5 characters.
+- Maximum 60 proposals. If the document has more than 60 distinct ideas, pick the 60 most important.
+- If the document is unparseable (empty, gibberish, single word), return {"proposals": []}.
+
+GRANULARITY FOR THIS PARSE:
+${instruction}
+
+RESPONSE FORMAT — JSON only, no prose, no code fences:
+{"proposals":[{"text":"...","sourceStart":0,"sourceEnd":42,"suggestedType":"beat"}]}
+
+SOURCE DOCUMENT (between <<<SOURCE>>> and <<<END>>>):
+<<<SOURCE>>>
+${source}
+<<<END>>>`;
+}

@@ -14,11 +14,15 @@ import {
   getCanvasRoom, createCard, updateCard, shelveCard, restoreCard, hardDeleteCard,
   restoreGhost, createThread, deleteThread, toggleCardThread, saveViewport,
   saveReaderObservation,
+  createImportedFile, updateImportedFile, createStagingSession,
+  setReaderSuppressedUntil, getImportFlags,
   type CanvasCard, type CanvasThread, type CardType, type CardStatus, type Emotion,
-  type ReaderObservation,
+  type ReaderObservation, type ProposedCard, type SourcePassage,
   CARD_TYPES, CARD_STATUSES, EMOTIONS, EMOTION_COLORS, STATUS_COLORS, TYPE_ICONS, THREAD_PALETTE,
 } from '@/lib/canvas-room-store';
+import { importStructuralFile } from '@/lib/import/structural';
 import { ReaderPanel } from './reader-panel';
+import { StagingRoom } from './staging-room';
 
 interface CanvasRoomProps {
   open: boolean;
@@ -39,8 +43,12 @@ export function CanvasRoom({ open, onClose }: CanvasRoomProps) {
   const [threadFilter, setThreadFilter] = useState<Set<string>>(new Set());
   const [ghostViewing, setGhostViewing] = useState<{ cardId: string; index: number } | null>(null);
   const [readerOpen, setReaderOpen] = useState(false);
+  const [stagingSessionId, setStagingSessionId] = useState<string | null>(null);
+  const [importBanner, setImportBanner] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const canvasRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Load ──
   useEffect(() => {
@@ -161,6 +169,131 @@ export function CanvasRoom({ open, onClose }: CanvasRoomProps) {
     setObservations(prev => [obs, ...prev].slice(0, 20));
   }, []);
 
+  // ── Import ──
+  // Detect format, route to structural parser or staging AI pipeline.
+  const handleImportFile = useCallback(async (file: File) => {
+    const flags = getImportFlags();
+    const name = file.name.toLowerCase();
+    const isStructural = name.endsWith('.fdx') || name.endsWith('.fountain') || name.endsWith('.ftn');
+    const isProse = name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.markdown');
+
+    setImporting(true);
+    try {
+      if (isStructural && flags.structural) {
+        const result = await importStructuralFile(file);
+        setCards(getCanvasRoom().cards);
+        // 24-hour Reader quiet period post-import
+        setReaderSuppressedUntil(Date.now() + 24 * 60 * 60 * 1000);
+        setImportBanner(
+          result.sceneCount > 0
+            ? `Imported ${result.sceneCount} scene${result.sceneCount === 1 ? '' : 's'} from ${file.name}.`
+            : `No scenes parsed from ${file.name}. The file may be empty or malformed.`
+        );
+        return;
+      }
+
+      if (isProse && flags.staging) {
+        const text = await file.text();
+        await startStagingFromText(file.name, text, 'text');
+        return;
+      }
+
+      // Unsupported format
+      setImportBanner(`${file.name} isn't a supported format yet. Try .fdx, .fountain, .txt, or .md.`);
+    } catch (err) {
+      setImportBanner(`Import failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    } finally {
+      setImporting(false);
+    }
+  }, []);
+
+  const startStagingFromText = useCallback(async (filename: string, text: string, format: 'text' | 'paste' | 'markdown') => {
+    // 1. Create the imported file record (source text preserved)
+    const importedFile = createImportedFile({
+      originalFilename: filename,
+      mimeType: 'text/plain',
+      contentBody: text,
+      format,
+    });
+
+    // 2. Ask the server to propose cards (wording-preservation enforced)
+    const res = await fetch('/api/kleo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'import-parse-prose', source: text, parseHint: 'auto' }),
+    });
+    const data = await res.json() as { proposals: Array<{ text: string; sourceStart: number; sourceEnd: number; sourcePassageRef: string; suggestedType: CardType }>, rejectedCount?: number };
+    const rawProposals = Array.isArray(data.proposals) ? data.proposals : [];
+
+    if (rawProposals.length === 0) {
+      updateImportedFile(importedFile.id, { parseStatus: 'partial' });
+      setImportBanner(`${filename} didn't produce any cards. Try adjusting the text or formatting.`);
+      return;
+    }
+
+    // 3. Build SourcePassages from returned offsets + update the imported file
+    const passages: SourcePassage[] = rawProposals.map(p => ({
+      ref: p.sourcePassageRef,
+      importedFileId: importedFile.id,
+      startOffset: p.sourceStart,
+      endOffset: p.sourceEnd,
+      pageNumber: null,
+      text: text.slice(p.sourceStart, p.sourceEnd),
+    }));
+    updateImportedFile(importedFile.id, { passages, parseStatus: 'parsed' });
+
+    // 4. Build ProposedCards
+    const proposedCards: ProposedCard[] = rawProposals.map((p, i) => ({
+      id: `pp_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+      sourcePassageRef: p.sourcePassageRef,
+      text: p.text,
+      suggestedType: (['beat', 'moment', 'question', 'fragment'] as CardType[]).includes(p.suggestedType) ? p.suggestedType : 'fragment',
+      decision: 'pending',
+      acceptedCardId: null,
+      editedText: null,
+    }));
+
+    // 5. Create the staging session + open the room
+    const session = createStagingSession(importedFile.id, proposedCards);
+    setReaderSuppressedUntil(Date.now() + 24 * 60 * 60 * 1000);
+    setStagingSessionId(session.id);
+  }, []);
+
+  const handleFilePickerChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleImportFile(file);
+    e.target.value = ''; // reset so picking the same file twice works
+  }, [handleImportFile]);
+
+  const handleCanvasDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleImportFile(file);
+  }, [handleImportFile]);
+
+  const handleCanvasPaste = useCallback(async (e: ClipboardEvent) => {
+    // Skip when user is editing a card/input
+    const target = e.target as HTMLElement;
+    if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return;
+    const flags = getImportFlags();
+    if (!flags.staging) return;
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (text.length < 200) return; // under threshold — let the browser handle normally
+    e.preventDefault();
+    await startStagingFromText('Pasted text', text, 'paste');
+  }, [startStagingFromText]);
+
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener('paste', handleCanvasPaste);
+    return () => window.removeEventListener('paste', handleCanvasPaste);
+  }, [open, handleCanvasPaste]);
+
+  const handleStagingComplete = useCallback(() => {
+    setStagingSessionId(null);
+    setCards(getCanvasRoom().cards);
+  }, []);
+
   // ── Keyboard shortcuts ──
 
   useEffect(() => {
@@ -237,9 +370,51 @@ export function CanvasRoom({ open, onClose }: CanvasRoomProps) {
         onZoomLevel={setZoomLevel}
         onClose={onClose}
         onOpenReader={() => setReaderOpen(true)}
+        onImportClick={() => fileInputRef.current?.click()}
+        importing={importing}
         cardCount={visibleCards.length}
         shelfCount={shelvedCards.length}
       />
+
+      {/* Hidden file input for Import button */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".fdx,.fountain,.ftn,.txt,.md,.markdown"
+        onChange={handleFilePickerChange}
+        style={{ display: 'none' }}
+      />
+
+      {/* Import banner — non-modal, dismissable */}
+      {importBanner && (
+        <div style={{
+          position: 'absolute', top: 56, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 90, padding: '8px 16px', borderRadius: 4,
+          background: 'rgba(196,92,74,0.12)', border: '1px solid rgba(196,92,74,0.25)',
+          color: '#e5dcc0', fontSize: 12, fontFamily: 'Georgia, serif',
+          display: 'flex', alignItems: 'center', gap: 12,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+        }}>
+          <span>{importBanner}</span>
+          <button
+            onClick={() => setImportBanner(null)}
+            style={{
+              background: 'none', border: 'none', color: '#7a7060',
+              cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1,
+            }}
+          >×</button>
+        </div>
+      )}
+
+      {/* Staging Room overlay — launches from prose import / paste */}
+      {stagingSessionId && (
+        <StagingRoom
+          open={true}
+          sessionId={stagingSessionId}
+          onClose={() => setStagingSessionId(null)}
+          onComplete={handleStagingComplete}
+        />
+      )}
 
       {/* Threads panel (left) */}
       <ThreadsPanel
@@ -278,6 +453,7 @@ export function CanvasRoom({ open, onClose }: CanvasRoomProps) {
           const next = Math.max(0, Math.min(card.ghostHistory.length - 1, prev.index + delta));
           return { ...prev, index: next };
         })}
+        onFileDrop={handleCanvasDrop}
       />
 
       {/* Right side: Shelf + Reader */}
@@ -303,11 +479,13 @@ export function CanvasRoom({ open, onClose }: CanvasRoomProps) {
 
 // ── Top bar ──
 
-function TopBar({ zoomLevel, onZoomLevel, onClose, onOpenReader, cardCount, shelfCount }: {
+function TopBar({ zoomLevel, onZoomLevel, onClose, onOpenReader, onImportClick, importing, cardCount, shelfCount }: {
   zoomLevel: ZoomLevel;
   onZoomLevel: (z: ZoomLevel) => void;
   onClose: () => void;
   onOpenReader: () => void;
+  onImportClick: () => void;
+  importing: boolean;
   cardCount: number; shelfCount: number;
 }) {
   return (
@@ -364,10 +542,27 @@ function TopBar({ zoomLevel, onZoomLevel, onClose, onOpenReader, cardCount, shel
         </span>
 
         <button
+          onClick={onImportClick}
+          disabled={importing}
+          title="Import FDX, Fountain, or prose (paste also works)"
+          style={{
+            marginLeft: 10,
+            padding: '5px 12px', fontSize: 10, fontWeight: 600,
+            background: 'transparent', color: importing ? '#4a4535' : '#c8bda0',
+            border: '1px solid rgba(200,189,160,0.16)', borderRadius: 4,
+            cursor: importing ? 'wait' : 'pointer',
+            letterSpacing: '0.1em', textTransform: 'uppercase',
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          {importing ? 'Importing…' : 'Import'}
+        </button>
+
+        <button
           onClick={onOpenReader}
           title="Open the Reader (?)"
           style={{
-            marginLeft: 10,
+            marginLeft: 6,
             padding: '5px 12px', fontSize: 10, fontWeight: 600,
             background: 'rgba(196,92,74,0.12)', color: '#c45c4a',
             border: '1px solid rgba(196,92,74,0.25)', borderRadius: 4,
@@ -505,12 +700,14 @@ interface CanvasProps {
   onRestoreGhost: (cardId: string, index: number) => void;
   onCloseGhosts: () => void;
   onStepGhost: (delta: number) => void;
+  onFileDrop: (e: React.DragEvent) => void;
 }
 
 const Canvas = ({ cards, threads, viewport, zoomLevel, focusedCardId, activeFilterIds,
   ghostViewing,
   onViewportChange, onFocusCard, onClickEmpty, onUpdateCard, onShelveCard,
   onToggleCardThread, onRestoreGhost, onCloseGhosts, onStepGhost,
+  onFileDrop,
   ref,
 }: CanvasProps & { ref: React.RefObject<HTMLDivElement | null> }) => {
   const [isPanning, setIsPanning] = useState(false);
@@ -570,6 +767,8 @@ const Canvas = ({ cards, threads, viewport, zoomLevel, focusedCardId, activeFilt
       onMouseUp={handleMouseUp}
       onMouseLeave={() => setIsPanning(false)}
       onWheel={handleWheel}
+      onDragOver={e => e.preventDefault()}
+      onDrop={onFileDrop}
       style={{
         gridArea: 'canvas', overflow: 'hidden', position: 'relative',
         background: '#13120f',
