@@ -8,6 +8,12 @@ import {
   buildRoomPlacePrompt,
   buildRoomSummaryPrompt,
 } from '@/lib/kleo-brain';
+import {
+  validateGrounded,
+  buildReaderPrompt,
+  buildCanvasContextForReader,
+  type GroundedObservation,
+} from '@/lib/canvas-grounded';
 import type { KleoMode } from '@/lib/kleo-brain';
 
 export async function POST(request: Request) {
@@ -77,6 +83,36 @@ export async function POST(request: Request) {
       const text = await callClaude(apiKey, prompt, 600);
       const parsed = safeJson(text, { paragraph: text, threads: [] });
       return NextResponse.json(parsed);
+    }
+
+    if (action === 'canvas-reader') {
+      // body: { kind: 'read-spine'|'whats-missing'|'emotional-shape'|'open-question',
+      //         cards, threads, question? }
+      const context = buildCanvasContextForReader(body.cards || [], body.threads || []);
+      const prompt = buildReaderPrompt(body.kind || 'read-spine', context, body.question);
+      const knownCardIds = new Set<string>((body.cards || []).map((c: { id: string }) => c.id));
+      const knownThreadIds = new Set<string>((body.threads || []).map((t: { id: string }) => t.id));
+
+      // Up to 3 attempts, each with a stricter reminder if the last failed
+      let attempt = 0;
+      let lastReason = '';
+      while (attempt < 3) {
+        const instruction = attempt === 0
+          ? prompt
+          : `${prompt}\n\nYour previous response failed the Grounded Test: ${lastReason}. Try again. Reference a SPECIFIC card ID, or return {"observation": null}.`;
+        const text = await callClaude(apiKey, instruction, 400);
+        const parsed = safeJson<GroundedObservation | { observation: null }>(
+          text,
+          { observation: null as unknown as string, referencedCardIds: [], referencedThreadIds: [], referencedSpinePositions: [] } as GroundedObservation,
+        );
+        const obs = (parsed as GroundedObservation);
+        const result = validateGrounded(obs.observation ? obs : null, knownCardIds, knownThreadIds);
+        if (result.ok) return NextResponse.json(obs.observation ? obs : { observation: null });
+        lastReason = result.reason || 'ungrounded';
+        attempt++;
+      }
+      // All attempts failed — better silence than slop
+      return NextResponse.json({ observation: null, _suppressed: true });
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
@@ -200,6 +236,27 @@ function handleWithoutAI(action: string, body: Record<string, unknown>) {
       ? `No notes in the room yet. Drop what's in your head — the half-thoughts, the images, the ones that won't leave. I'll tell you what's shaping up.`
       : `You've got ${notes.length} note${notes.length === 1 ? '' : 's'} and ${scenes.length} scene${scenes.length === 1 ? '' : 's'} on the board. Something's forming — keep adding. Ask me again when there's more to read.`;
     return NextResponse.json({ paragraph, threads: [] });
+  }
+
+  if (action === 'canvas-reader') {
+    // Offline fallback — pick a real card and anchor the observation to its ID
+    const cards = (body.cards as Array<{ id: string; text: string; type: string; threadIds: string[] }>) || [];
+    if (cards.length === 0) {
+      return NextResponse.json({ observation: null });
+    }
+    const kind = body.kind as string;
+    const pick = cards[Math.floor(cards.length / 2)]; // something mid-pile
+    const msg = kind === 'whats-missing'
+      ? `Card [${pick.id}] sits alone — nothing around it expands or answers it. What scene follows this feeling?`
+      : kind === 'emotional-shape'
+        ? `The pile is mostly untagged for emotion — hard to read the shape. Try tagging a few cards (including [${pick.id}]) and ask again.`
+        : `The card [${pick.id}] is the one I keep returning to. Everything else orbits it — consider making it the spine's first beat.`;
+    return NextResponse.json({
+      observation: msg,
+      referencedCardIds: [pick.id],
+      referencedThreadIds: [],
+      referencedSpinePositions: [],
+    });
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });

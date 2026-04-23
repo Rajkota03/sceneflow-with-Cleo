@@ -14,6 +14,7 @@ import { autoSave as autoSaveDoc } from '@/lib/doc';
 import { getSession, getSessions } from '@/lib/session-store';
 import { StorySpine } from '@/components/editor/story-spine';
 import { StoryRoom } from '@/components/editor/story-room';
+import { CanvasRoom } from '@/components/editor/canvas-room/canvas-room';
 import { KleoMargin } from '@/components/editor/kleo-margin';
 import type { Signal } from '@/lib/kleo-signals';
 import { BeatSheet } from '@/components/editor/beat-sheet';
@@ -135,6 +136,7 @@ function EditorInner() {
   const [kleoIdentity, setKleoIdentity] = useState<KleoIdentity>({ voice: 'buddy', grain: 30 });
   const [kleoInitialPrompt, setKleoInitialPrompt] = useState<string | null>(null);
   const [storyRoomOpen, setStoryRoomOpen] = useState(false);
+  const [canvasRoomOpen, setCanvasRoomOpen] = useState(false);
   const tiptapEditorRef = useRef<any>(null);
 
   // Load screenplay on mount
@@ -788,11 +790,11 @@ function EditorInner() {
               }}>{p.label}</button>
             ))}
 
-            {/* Story Room — pre-writing scratchpad, separate mode */}
+            {/* Pre-writing modes — Room (V1) + Canvas (V2) side by side for comparison */}
             <div style={{ width: 1, height: 16, background: palette?.border ?? 'rgba(200,189,160,0.10)', margin: '0 4px' }} />
             <button
               onClick={() => setStoryRoomOpen(true)}
-              title="Story Room — ideas before scenes"
+              title="Story Room — V1 pre-writing"
               style={{
                 padding: '5px 10px', fontSize: 12, borderRadius: 5,
                 background: storyRoomOpen ? 'rgba(196,92,74,0.15)' : 'transparent',
@@ -803,6 +805,19 @@ function EditorInner() {
                 fontStyle: 'italic', fontFamily: 'Georgia, serif',
               }}
             >Room</button>
+            <button
+              onClick={() => setCanvasRoomOpen(true)}
+              title="The Canvas — V2 spatial pre-writing"
+              style={{
+                padding: '5px 10px', fontSize: 12, borderRadius: 5,
+                background: canvasRoomOpen ? 'rgba(196,92,74,0.15)' : 'transparent',
+                color: canvasRoomOpen ? (palette?.cursor ?? '#c45c4a') : (palette?.ink ?? '#c8bda0'),
+                border: 'none', cursor: 'pointer',
+                fontWeight: 600, transition: 'all 0.15s', letterSpacing: '0.02em',
+                opacity: canvasRoomOpen ? 1 : 0.65,
+                fontStyle: 'italic', fontFamily: 'Georgia, serif',
+              }}
+            >Canvas</button>
           </div>
 
           {/* ── Right: stats + tools ── */}
@@ -1063,7 +1078,7 @@ function EditorInner() {
         defaultTitle={doc?.title || screenplay?.title || 'Untitled Screenplay'}
       />
 
-      {/* Story Room — the pile before the pages */}
+      {/* Story Room — V1 pre-writing */}
       {storyRoomOpen && kleoTaste && screenplay && (
         <StoryRoom
           open={storyRoomOpen}
@@ -1072,6 +1087,14 @@ function EditorInner() {
           taste={kleoTaste}
           palette={palette}
           onClose={() => setStoryRoomOpen(false)}
+        />
+      )}
+
+      {/* The Canvas — V2 spatial pre-writing */}
+      {canvasRoomOpen && (
+        <CanvasRoom
+          open={canvasRoomOpen}
+          onClose={() => setCanvasRoomOpen(false)}
         />
       )}
 
